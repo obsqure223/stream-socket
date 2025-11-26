@@ -38,32 +38,17 @@ def log(message):
 def broadcast_player_list():
     """Invia a TUTTI i client la lista aggiornata dei giocatori e il loro stato"""
     with players_lock:
-        # Creiamo una lista leggera da inviare
         users_list = [
             {"name": pid, "status": data["status"]} 
             for pid, data in players_data.items()
         ]
     
-    # Invio in broadcast
     with players_lock:
         targets = list(players_data.values())
     
     for p in targets:
         try:
             send_msg(p["conn"], {"type": "player_list_update", "data": users_list})
-        except: pass
-
-def broadcast_chat(sender, message):
-    """Invia un messaggio di chat a tutti"""
-    msg_obj = {
-        "type": "chat_message", 
-        "data": {"sender": sender, "message": message}
-    }
-    with players_lock:
-        targets = list(players_data.values())
-        
-    for p in targets:
-        try: send_msg(p["conn"], msg_obj)
         except: pass
 
 def broadcast_game_state(room, data):
@@ -103,15 +88,14 @@ def client_handler(conn, addr):
                 except: pass
                 return 
             else:
-                # REGISTRAZIONE GIOCATORE - STATO INIZIALE: ONLINE (LOBBY)
                 players_data[requested_id] = {"conn": conn, "status": "online"}
                 player_id = requested_id
 
         log(f"[Login] Entrato in Lobby: {player_id}")
-        send_msg(conn, {"ok": True, "status": "lobby"}) # Conferma login
-        broadcast_player_list() # Aggiorna le liste di tutti
+        send_msg(conn, {"ok": True, "status": "lobby"}) 
+        broadcast_player_list() 
 
-        # 2. LOOP PRINCIPALE (LOBBY & GIOCO)
+        # 2. LOOP PRINCIPALE
         while True:
             msg = recv_msg(conn)
             if msg is None: break 
@@ -120,23 +104,43 @@ def client_handler(conn, addr):
             
             if action == "ping": continue
 
-            # --- GESTIONE CHAT ---
+            # --- GESTIONE CHAT (MODIFICATA PER PRIVACY) ---
             if action == "chat":
                 text = msg.get("message", "").strip()
                 if text:
-                    broadcast_chat(player_id, text)
+                    msg_obj = {
+                        "type": "chat_message",
+                        "data": {"sender": player_id, "message": text}
+                    }
+
+                    if current_room:
+                        # 1. CHAT PARTITA: Invia SOLO all'avversario/i nella stanza
+                        # log(f"[Chat Game] {player_id}: {text}") # Decommenta per debug
+                        with current_room.lock:
+                            for p_conn in current_room.connections.values():
+                                try: send_msg(p_conn, msg_obj)
+                                except: pass
+                    else:
+                        # 2. CHAT LOBBY: Invia SOLO a chi è in Lobby (non a chi gioca)
+                        # log(f"[Chat Lobby] {player_id}: {text}") # Decommenta per debug
+                        with players_lock:
+                            targets = [
+                                p["conn"] for p in players_data.values() 
+                                if p["status"] != "ingame" # Esclude chi sta giocando
+                            ]
+                        for c in targets:
+                            try: send_msg(c, msg_obj)
+                            except: pass
             
             # --- GESTIONE START MATCHMAKING ---
             elif action == "start_search":
                 log(f"[Matchmaking] {player_id} cerca partita...")
                 
-                # Aggiorna stato
                 with players_lock:
                     if player_id in players_data:
                         players_data[player_id]["status"] = "waiting"
                 broadcast_player_list()
 
-                # Logica Matchmaking
                 with waiting_lock:
                     if waiting_room is None:
                         room = GameRoom(player_id)
@@ -155,13 +159,11 @@ def client_handler(conn, addr):
                             waiting_room = None 
                             current_room = room
                             
-                            # Aggiorna stati a INGAME
                             with players_lock:
                                 if host_id in players_data: players_data[host_id]["status"] = "ingame"
                                 if player_id in players_data: players_data[player_id]["status"] = "ingame"
                             broadcast_player_list()
 
-                            # Sorteggio e Start
                             host_symbol = room.players[host_id]
                             joiner_symbol = room.players[player_id]
                             
@@ -178,7 +180,7 @@ def client_handler(conn, addr):
                         except GameRoomError as e:
                             send_msg(conn, {"ok": False, "reason": str(e)})
 
-            # --- GESTIONE MOSSE DI GIOCO ---
+            # --- GESTIONE MOSSE ---
             elif action == "move":
                 pos = msg.get("pos")
                 if current_room:
@@ -187,8 +189,6 @@ def client_handler(conn, addr):
                     
                     if res.get("status") == "ended":
                         log(f"[GameOver] Stanza {current_room.id[:8]}: {res.get('result')}")
-                        # Nota: Non cambiamo lo stato qui, perché i giocatori sono ancora nella schermata dei risultati.
-                        # Lo stato cambia quando inviano "back_to_lobby" o "start_search" (Gioca ancora).
 
             # --- GESTIONE USCITA DALLA CODA ---
             elif action == "leave_queue":
@@ -202,19 +202,15 @@ def client_handler(conn, addr):
                         players_data[player_id]["status"] = "online"
                 broadcast_player_list()
 
-            # --- NUOVO: GESTIONE RITORNO IN LOBBY ---
+            # --- GESTIONE RITORNO IN LOBBY ---
             elif action == "back_to_lobby":
                 log(f"[Lobby] {player_id} è tornato in lobby.")
                 
-                # Resettiamo lo stato a 'online'
                 with players_lock:
                     if player_id in players_data:
                         players_data[player_id]["status"] = "online"
                 
-                # Reset della stanza corrente per questo thread
                 current_room = None
-                
-                # Aggiorniamo la lista per tutti (così il pallino diventa verde)
                 broadcast_player_list()
 
     except Exception as e:
@@ -228,12 +224,10 @@ def client_handler(conn, addr):
 
         log(f"[Disconnect] {player_id if player_id else addr}")
         
-        # Rimuovi giocatore e aggiorna lista
         with players_lock:
             if player_id in players_data:
                 del players_data[player_id]
         
-        # Se era in partita, gestisci disconnessione
         if player_id and current_room:
             with current_room.lock:
                 if player_id in current_room.connections:
@@ -248,7 +242,6 @@ def client_handler(conn, addr):
                             })
                         except: pass
         
-        # Se era in waiting room
         with waiting_lock:
             if waiting_room and current_room and waiting_room.id == current_room.id:
                 waiting_room = None
@@ -256,11 +249,9 @@ def client_handler(conn, addr):
         try: conn.close()
         except: pass
         
-        # Aggiorna la lista per chi è rimasto
         broadcast_player_list()
 
-# --- THREAD LISTENER & GUI ---
-
+# --- SERVER GUI SETUP ---
 def run_server_listener(host, port):
     global server_socket, server_running
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -325,7 +316,6 @@ def main(page: ft.Page):
         ft.Container(content=logs_view, expand=True, bgcolor="#121212", border=ft.border.all(1, "#333333"), border_radius=10, margin=ft.margin.only(top=10)),
         ft.Text("v1.0 - Powered by Python & Flet", size=10, color="grey", text_align="center")
     )
-    log("Benvenuto nella Console del Server. Premi 'Avvia' per iniziare.")
 
 if __name__ == "__main__":
     ft.app(target=main)
