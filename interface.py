@@ -5,9 +5,7 @@ import threading
 import math
 import re
 import warnings
-
-# Importiamo le nostre dipendenze
-from client import TrisClient  # Assicurati che client.py sia nella stessa cartella
+from client import TrisClient  
 from settings import APP_COLORS
 
 warnings.filterwarnings("ignore")
@@ -16,6 +14,7 @@ class TrisFletUI:
     def __init__(self, page: ft.Page):
         self.page = page
         self.client = TrisClient()
+        page.window.icon = "icona.png" 
         
         # Dati Utente
         self.nickname = None
@@ -23,12 +22,11 @@ class TrisFletUI:
         self.my_symbol = None
         self.opponent = None
         
-        # Stato Grafico
+        # Stato Grafico - SOLO DARK MODE
         self.current_view = "login"
-        self.is_dark = True 
-        self.colors = APP_COLORS # Caricato da settings.py
+        self.colors = APP_COLORS 
         
-        # Gestione Errori/Connessione (FIX BUG)
+        # Gestione Errori/Connessione
         self.expecting_disconnect = False 
 
         # --- RIFERIMENTI UI ---
@@ -43,46 +41,20 @@ class TrisFletUI:
         self.main_content_area = ft.Container(expand=True) 
         self.sidebar_area = ft.Container(width=300, visible=False, animate_opacity=300) 
         
-        # --- CHAT E LISTE ---
+        # Lista giocatori (solo Lobby)
         self.online_players = []
-        self.chat_messages = ft.ListView(expand=True, spacing=5, auto_scroll=True)
         self.players_list_view = ft.ListView(expand=True, spacing=5)
-        
-        # Inizializza Input Chat
-        c = self.colors["dark"]
-        self.chat_input = ft.TextField(
-            hint_text="Scrivi messaggio...", 
-            text_size=12, height=40, content_padding=10,
-            on_submit=self.send_chat_message,
-            bgcolor=c["input_bg"], color=c["input_fg"], 
-            border_color=c["border"],
-            expand=True 
-        )
-        
-        # Componenti Chat
-        self.chat_header_text = ft.Text("CHAT ROOM", weight="bold", size=14, color=c["text"])
-        self.chat_header_container = ft.Container(content=self.chat_header_text, padding=10, bgcolor=c["surface"])
-        
-        self.chat_input_container = ft.Container(
-            content=ft.Row([self.chat_input, ft.IconButton("send", icon_size=20, on_click=self.send_chat_message)]),
-            padding=5, bgcolor=c["surface"]
-        )
 
-        self.chat_list_container = ft.Container(content=self.chat_messages, expand=True, bgcolor="#121212", padding=10)
-
-        self.chat_container = ft.Container(
-            content=ft.Column([
-                self.chat_header_container,
-                self.chat_list_container,
-                self.chat_input_container
-            ], spacing=0, expand=True),
-            expand=True
-        )
+        # --- CREAZIONE DELLE DUE CHAT SEPARATE ---
+        # 1. Chat LOBBY
+        self.lobby_chat_ui = self._build_chat_module("LOBBY CHAT")
+        # 2. Chat GAME
+        self.game_chat_ui = self._build_chat_module("GAME CHAT")
 
         # --- SETUP PAGINA ---
         self.page.title = "Tris Multiplayer"
         self.page.theme_mode = ft.ThemeMode.DARK 
-        self.page.bgcolor = c["bg"]
+        self.page.bgcolor = self.get_c()["bg"]
         self.page.padding = 0 
 
         # Animazione
@@ -93,8 +65,8 @@ class TrisFletUI:
         self.status_text = None
 
         # --- NAVBAR ---
-        self.theme_icon = ft.IconButton(icon="wb_sunny_outlined", tooltip="Cambia Tema", on_click=self.toggle_theme)
-        self.exit_button = ft.IconButton(icon="exit_to_app", tooltip="Esci", visible=False, on_click=self.request_exit_dialog)
+        # Tasto "Esci" (Log out)
+        self.exit_button = ft.IconButton(icon="exit_to_app", tooltip="Esci dal gioco", visible=False, on_click=self.request_exit_dialog)
         self.chat_drawer_button = ft.IconButton(icon="chat", tooltip="Apri Chat", visible=False, on_click=self.open_drawer_safe)
 
         self.page.appbar = ft.AppBar(
@@ -103,7 +75,7 @@ class TrisFletUI:
             title=ft.Text("Tris Multiplayer", weight=ft.FontWeight.BOLD),
             center_title=True,        
             bgcolor="blueGrey900", 
-            actions=[self.chat_drawer_button, self.theme_icon, ft.Container(width=10)]
+            actions=[self.chat_drawer_button, ft.Container(width=10)]
         )
 
         self.page.add(ft.Row([self.main_content_area, self.sidebar_area], expand=True, spacing=0))
@@ -111,65 +83,43 @@ class TrisFletUI:
 
     # --- HELPERS ---
     def get_c(self):
-        return self.colors["dark"] if self.is_dark else self.colors["light"]
+        return self.colors["dark"]
 
-    def toggle_theme(self, e):
-        self.is_dark = not self.is_dark
-        mode = "dark" if self.is_dark else "light"
-        c = self.colors[mode]
+    def _build_chat_module(self, title):
+        c = self.get_c()
+        msg_list = ft.ListView(expand=True, spacing=5, auto_scroll=True)
+        list_container = ft.Container(content=msg_list, expand=True, bgcolor="#121212", padding=10)
+        
+        inp = ft.TextField(
+            hint_text="Scrivi messaggio...", 
+            text_size=12, height=40, content_padding=10,
+            on_submit=lambda e: self.send_chat_message(e, inp), 
+            bgcolor=c["input_bg"], color=c["input_fg"], 
+            border_color=c["border"],
+            expand=True 
+        )
+        
+        header = ft.Container(
+            content=ft.Text(title, weight="bold", size=14, color=c["text"]), 
+            padding=10, bgcolor=c["surface"]
+        )
+        
+        inp_container = ft.Container(
+            content=ft.Row([inp, ft.IconButton("send", icon_size=20, on_click=lambda e: self.send_chat_message(e, inp))]),
+            padding=5, bgcolor=c["surface"]
+        )
 
-        self.page.theme_mode = ft.ThemeMode.DARK if self.is_dark else ft.ThemeMode.LIGHT
-        self.theme_icon.icon = "wb_sunny_outlined" if self.is_dark else "dark_mode_outlined"
-        self.page.bgcolor = c["bg"]
-        self.page.appbar.bgcolor = "blueGrey900" if self.is_dark else "blueGrey200"
+        main_col = ft.Column([header, list_container, inp_container], spacing=0, expand=True)
+        container = ft.Container(content=main_col, expand=True)
 
-        # Aggiornamento UI manuale per componenti specifici
-        self.sidebar_area.bgcolor = c["sidebar"]
-        if self.sidebar_area.content:
-            self.sidebar_area.content.bgcolor = c["sidebar"]
-            self.sidebar_area.content.border = ft.border.only(left=ft.border.BorderSide(1, "#444" if self.is_dark else "#ddd"))
-            
-        self.chat_header_container.bgcolor = c["surface"]
-        self.chat_header_text.color = c["text"]
-        self.chat_list_container.bgcolor = "#121212" if self.is_dark else "#f5f5f5"
-        self.chat_input_container.bgcolor = c["surface"]
-        self.chat_input.bgcolor = c["input_bg"]
-        self.chat_input.color = c["input_fg"]
-        self.chat_input.border_color = c["border"]
-
-        for ctrl in self.chat_messages.controls:
-            if isinstance(ctrl, ft.Column):
-                sender = ctrl.controls[0]
-                msg_body = ctrl.controls[1]
-                is_me = (sender.value == self.nickname) if self.nickname else False
-                msg_body.color = c["me"] if is_me else c["other"]
-
-        # Aggiornamento Viste
-        if self.current_view == "login" and self.login_box_container:
-            self.login_box_container.bgcolor = c["login_bg"]
-            self.login_box_container.border = ft.border.all(1, c["login_border"])
-            try: self.login_box_container.content.controls[0].color = c["text"]
-            except: pass
-            if self.nickname_input:
-                self.nickname_input.bgcolor = c["input_bg"]
-                self.nickname_input.color = c["input_fg"]
-                self.nickname_input.border_color = "white" if self.is_dark else "blue"
-        elif self.lobby_container:
-            self.lobby_container.bgcolor = c["bg"]
-            try:
-                col = self.lobby_container.content
-                col.controls[1].color = c["text"]
-                col.controls[2].color = c["text_dim"]
-            except: pass
-        elif self.game_container:
-            self.game_container.bgcolor = c["bg"]
-        elif self.waiting_container:
-            self.waiting_container.bgcolor = c["bg"]
-        elif self.end_container:
-            self.end_container.bgcolor = c["bg"]
-
-        self.update_players_list_ui()
-        self.page.update()
+        return {
+            "container": container,
+            "list": msg_list,
+            "input": inp,
+            "header": header,
+            "list_container": list_container,
+            "input_container": inp_container
+        }
 
     def open_drawer_safe(self, e):
         try:
@@ -186,36 +136,26 @@ class TrisFletUI:
                     content=ft.Text("GIOCATORI ONLINE", weight="bold", size=14, color=c["text"]),
                     padding=10, bgcolor=c["surface"]
                 ),
-                ft.Container(content=self.players_list_view, height=200, bgcolor="#121212" if self.is_dark else "#f5f5f5", padding=5),
+                ft.Container(
+                    content=self.players_list_view, 
+                    height=200, 
+                    bgcolor="#121212", 
+                    padding=5
+                ),
                 ft.Divider(height=1, color="grey"),
-                self.chat_container 
+                self.lobby_chat_ui["container"] 
             ], spacing=0),
             bgcolor=c["sidebar"],
-            border=ft.border.only(left=ft.border.BorderSide(1, "#444" if self.is_dark else "#ddd"))
+            border=ft.border.only(left=ft.border.BorderSide(1, "#444"))
         )
 
     def setup_game_drawer(self):
         c = self.get_c()
         self.page.end_drawer = ft.NavigationDrawer(
-            controls=[ft.Container(content=self.chat_container, expand=True, padding=0, height=600)],
+            controls=[ft.Container(content=self.game_chat_ui["container"], expand=True, padding=0, height=600)], 
             bgcolor=c["sidebar"],
         )
         self.page.update()
-    
-    def _reset_chat(self, context_name):
-        """Pulisce la chat e resetta lo stato visivo."""
-        self.chat_messages.auto_scroll = False
-        self.chat_messages.controls.clear()
-        
-        # Aggiunge un messaggio di sistema per confermare visivamente il reset
-        c = self.get_c()
-        self.chat_messages.controls.append(
-            ft.Row([
-                ft.Text(f"--- {context_name} ---", size=11, color=c["text_dim"], italic=True)
-            ], alignment=ft.MainAxisAlignment.CENTER)
-        )
-        
-        self.chat_messages.auto_scroll = True # Forza l'aggiornamento immediato del solo componente
 
     def show_login(self):
         self.current_view = "login"
@@ -233,7 +173,7 @@ class TrisFletUI:
             label="Nickname", width=200, text_align=ft.TextAlign.CENTER,
             value=default_nick, on_submit=self.on_connect, max_length=15,
             bgcolor=c["input_bg"], color=c["input_fg"],
-            border_color="white" if self.is_dark else "blue"
+            border_color="white"
         )
         
         self.error_text = ft.Text(value="", color="red", size=14, weight=ft.FontWeight.BOLD, visible=False, text_align=ft.TextAlign.CENTER)
@@ -251,6 +191,8 @@ class TrisFletUI:
                 alignment=ft.MainAxisAlignment.CENTER
             ),
             padding=40, border_radius=20, width=350, 
+            bgcolor=c["login_bg"], 
+            border=ft.border.all(1, c["login_border"])
         )
 
         self.start_background_animation()
@@ -269,16 +211,10 @@ class TrisFletUI:
         self.stop_animation()
         c = self.get_c()
         
-        # 1. Puliamo la chat (in memoria)
-        self._reset_chat("Lobby Chat")
-        
         self.chat_drawer_button.visible = False 
         self.exit_button.visible = False 
-        
-        # 2. Rimuoviamo il Drawer (se esiste)
         self.page.end_drawer = None
         
-        # 3. Costruiamo la Sidebar (che ora conterrà la chat)
         self.sidebar_area.content = self.build_lobby_sidebar()
         self.sidebar_area.visible = True
         self.sidebar_area.bgcolor = c["sidebar"]
@@ -292,6 +228,7 @@ class TrisFletUI:
                     ft.Divider(height=40, color="transparent"),
                     ft.ElevatedButton("AVVIA MATCHMAKING", icon="play_circle", width=250, height=60, style=ft.ButtonStyle(bgcolor="blue", color="white", text_style=ft.TextStyle(size=18, weight="bold")), on_click=self.start_matchmaking),
                     ft.Container(height=20),
+                    # Tasto Esci anche qui, punta al logout
                     ft.OutlinedButton("Esci (Logout)", icon="logout", on_click=self.request_exit_dialog)
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER
@@ -299,8 +236,6 @@ class TrisFletUI:
             alignment=ft.alignment.center, expand=True, bgcolor=c["bg"]
         )
         self.main_content_area.content = self.lobby_container
-        
-        # 4. Aggiorniamo TUTTA la pagina (questo renderizza la chat pulita nella nuova posizione)
         self.page.update()
 
     def show_waiting_view(self):
@@ -328,12 +263,11 @@ class TrisFletUI:
         self.stop_animation()
         c = self.get_c()
         
-        # 1. Puliamo la chat (in memoria)
-        self._reset_chat("Game Chat")
-        
-        # 2. Nascondiamo sidebar e impostiamo il Drawer (che ora conterrà la chat)
+        self.game_chat_ui["list"].controls.clear()
+        self.game_chat_ui["list"].controls.append(ft.Text("Inizio Partita! Buona fortuna.", color="green", italic=True, size=12))
+
         self.sidebar_area.visible = False
-        self.setup_game_drawer() # Qui dentro la chat viene assegnata al drawer
+        self.setup_game_drawer() 
         
         self.chat_drawer_button.visible = True
         self.exit_button.visible = True
@@ -359,7 +293,7 @@ class TrisFletUI:
                     ft.Divider(height=20, color="transparent"),
                     ft.Column(controls=rows, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Divider(height=30, color="transparent"),
-                    ft.OutlinedButton("Abbandona Partita", icon="flag", on_click=self.request_exit_dialog, style=ft.ButtonStyle(color="red"))
+                    ft.OutlinedButton("Abbandona Partita", icon="flag", on_click=self.request_abandon_match_dialog, style=ft.ButtonStyle(color="red"))
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER
             ),
@@ -367,39 +301,6 @@ class TrisFletUI:
         )
         self.main_content_area.content = self.game_container
         
-        # 3. Aggiorniamo TUTTA la pagina
-        self.page.update()
-
-        self.game_container = ft.Container(
-            content=ft.Column(
-                [
-                    self.status_text,
-                    ft.Divider(height=20, color="transparent"),
-                    ft.Column(controls=rows, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    ft.Divider(height=30, color="transparent"),
-                    ft.OutlinedButton("Abbandona Partita", icon="flag", on_click=self.request_exit_dialog, style=ft.ButtonStyle(color="red"))
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER
-            ),
-            alignment=ft.alignment.center, expand=True, bgcolor=self.get_c()["bg"]
-        )
-        self.main_content_area.content = self.game_container
-        self.page.update()
-
-        self.game_container = ft.Container(
-            content=ft.Column(
-                [
-                    self.status_text,
-                    ft.Divider(height=20, color="transparent"),
-                    ft.Column(controls=rows, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    ft.Divider(height=30, color="transparent"),
-                    ft.OutlinedButton("Abbandona Partita", icon="flag", on_click=self.request_exit_dialog, style=ft.ButtonStyle(color="red"))
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER
-            ),
-            alignment=ft.alignment.center, expand=True, bgcolor=self.get_c()["bg"]
-        )
-        self.main_content_area.content = self.game_container
         self.page.update()
 
     def show_end_dialog(self, result):
@@ -438,39 +339,26 @@ class TrisFletUI:
         self.client.send({"action": "move", "player_id": self.nickname, "room_id": self.room_id, "pos": idx})
 
     def update_board(self, board, turn, result=None):
-        # 1. Sicurezza: Se non siamo nella vista 'game', ignoriamo l'aggiornamento
-        # Questo previene il crash se arriva un messaggio mentre stiamo uscendo dalla partita
         if self.current_view != "game" or not self.board_items:
             return
 
-        # 2. Aggiorniamo le proprietà dei controlli (SENZA chiamare .update() sui singoli oggetti)
         for i, val in enumerate(board):
-            if i >= len(self.board_items): break # Protezione extra
+            if i >= len(self.board_items): break 
             
             btn, img = self.board_items[i]
-            
-            # Imposta immagine
             if val == "X": 
-                img.src = "x.png"
-                img.opacity = 1
+                img.src = "x.png"; img.opacity = 1
             elif val == "O": 
-                img.src = "o.png"
-                img.opacity = 1
+                img.src = "o.png"; img.opacity = 1
             else: 
-                img.src = "x.png" # Placeholder
-                img.opacity = 0
+                img.src = "x.png"; img.opacity = 0
             
-            # Calcola stato bottone
             is_my_turn = (turn == self.my_symbol)
             is_empty = (val is None)
             game_running = (turn is not None)
             
-            # Aggiorna disabilitazione
             btn.disabled = not (is_my_turn and is_empty and game_running)
 
-            # NOTA: Abbiamo rimosso img.update() e btn.update() da qui!
-
-        # 3. Aggiorna testo stato
         if self.status_text:
             if turn: 
                 turn_msg = "Tocca a te!" if turn == self.my_symbol else f"Tocca a {self.opponent}"
@@ -479,14 +367,12 @@ class TrisFletUI:
             else: 
                 self.status_text.value = "Partita Terminata"
 
-        # 4. Unico aggiornamento finale della pagina
-        # Questo ridisegna tutto ciò che è attualmente visibile, evitando errori su oggetti rimossi
         self.page.update()
 
     # --- CONNESSIONE E MESSAGGI ---
     def on_connect(self, e):
         self.error_text.visible = False
-        self.expecting_disconnect = False # RESET FLAG
+        self.expecting_disconnect = False 
         self.page.update()
         
         nick_val = self.nickname_input.value.strip()
@@ -531,15 +417,17 @@ class TrisFletUI:
     def _process_message(self, msg):
         msg_type = msg.get("type")
         
-        # FIX PER IL LOGIN FALLITO
         if msg_type == "connection_lost":
             if self.expecting_disconnect: 
                 self.expecting_disconnect = False
-                return # Ignora il crash se era previsto
+                return 
             self.show_crash_dialog()
             return
 
-        if msg_type == "chat_message": self.add_chat_message(msg["data"]["sender"], msg["data"]["message"]); return
+        if msg_type == "chat_message": 
+            self.add_chat_message(msg["data"]["sender"], msg["data"]["message"])
+            return
+            
         if msg_type == "player_list_update": self.online_players = msg["data"]; self.update_players_list_ui(); return
         if msg_type == "match_found":
             self.room_id = msg["data"]["game_id"]; self.my_symbol = msg["data"]["you_are"]; self.opponent = msg["data"]["opponent"]
@@ -551,8 +439,7 @@ class TrisFletUI:
             
         if self.current_view == "login":
             if msg.get("ok") is False: 
-                # Login fallito (es: nick doppio)
-                self.expecting_disconnect = True # Imposta flag
+                self.expecting_disconnect = True 
                 self._handle_login_error(msg.get("reason"))
                 if self.client.sock:
                     try: self.client.sock.close()
@@ -585,15 +472,31 @@ class TrisFletUI:
         c = self.get_c()
         is_me = (sender == self.nickname)
         color = c["me"] if is_me else c["other"]
-        self.chat_messages.controls.append(ft.Column([ft.Text(sender, size=10, color="grey", weight="bold"), ft.Text(text, size=13, color=color, selectable=True)], spacing=2))
-        self.page.update()
+        
+        target_list = None
+        if self.current_view == "lobby":
+            target_list = self.lobby_chat_ui["list"]
+        elif self.current_view == "game":
+            target_list = self.game_chat_ui["list"]
+            
+        if target_list:
+            target_list.controls.append(
+                ft.Column([
+                    ft.Text(sender, size=10, color="grey", weight="bold"), 
+                    ft.Text(text, size=13, color=color, selectable=True)
+                ], spacing=2)
+            )
+            self.page.update()
 
-    def send_chat_message(self, e):
-        text = self.chat_input.value.strip()
+    def send_chat_message(self, e, input_field):
+        text = input_field.value.strip()
         if not text: return
-        self.chat_input.value = ""; self.page.update()
-        try: self.chat_input.focus()
+        
+        input_field.value = ""
+        self.page.update()
+        try: input_field.focus()
         except: pass
+        
         self.client.send({"action": "chat", "message": text})
 
     # --- ANIMAZIONE & DIALOGS ---
@@ -615,10 +518,50 @@ class TrisFletUI:
         threading.Thread(target=self._animation_loop, daemon=True).start()
     def stop_animation(self): self.anim_running = False
 
+    # --- GESTIONE DIALOGHI ---
+
+    # 1. Dialogo per Uscita App/Logout (NavBar e Lobby)
     def request_exit_dialog(self, e):
-        self.current_dialog = ft.AlertDialog(modal=True, title=ft.Text("Conferma Uscita"), content=ft.Text("Vuoi davvero uscire?"), actions=[ft.TextButton("No", on_click=self.close_dialog), ft.TextButton("Si, Esci", on_click=self.logout, style=ft.ButtonStyle(color="red"))])
+        self.current_dialog = ft.AlertDialog(
+            modal=True, 
+            title=ft.Text("Conferma Uscita"), 
+            content=ft.Text("Vuoi davvero uscire dal gioco?"), 
+            actions=[
+                ft.TextButton("No", on_click=self.close_dialog), 
+                ft.TextButton("Si, Esci", on_click=self.logout, style=ft.ButtonStyle(color="red"))
+            ]
+        )
         self.page.open(self.current_dialog)
-    
+
+    # 2. Dialogo per Abbandono Partita (Game View -> Lobby)
+    def request_abandon_match_dialog(self, e):
+        self.current_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Abbandona Partita"),
+            content=ft.Text("Vuoi arrenderti e tornare alla lobby?"),
+            actions=[
+                ft.TextButton("No", on_click=self.close_dialog),
+                ft.TextButton("Si, Abbandona", on_click=self.confirm_abandon, style=ft.ButtonStyle(color="red"))
+            ]
+        )
+        self.page.open(self.current_dialog)
+
+    def confirm_abandon(self, e):
+        self.close_dialog(e)
+        
+        # Invia al server la notifica di resa
+        if self.room_id:
+            self.client.send({"action": "leave_game", "room_id": self.room_id}) 
+        
+        # Resetta le variabili di gioco locali
+        self.room_id = None
+        self.my_symbol = None
+        self.opponent = None
+        self.board_items = []
+        
+        # Torna alla lobby
+        self.show_lobby_view()
+
     def show_crash_dialog(self):
         self.stop_animation()
         if self.current_dialog: 
