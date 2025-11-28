@@ -115,18 +115,16 @@ def client_handler(conn, addr):
 
                     if current_room:
                         # 1. CHAT PARTITA: Invia SOLO all'avversario/i nella stanza
-                        # log(f"[Chat Game] {player_id}: {text}") # Decommenta per debug
                         with current_room.lock:
                             for p_conn in current_room.connections.values():
                                 try: send_msg(p_conn, msg_obj)
                                 except: pass
                     else:
                         # 2. CHAT LOBBY: Invia SOLO a chi è in Lobby (non a chi gioca)
-                        # log(f"[Chat Lobby] {player_id}: {text}") # Decommenta per debug
                         with players_lock:
                             targets = [
                                 p["conn"] for p in players_data.values() 
-                                if p["status"] != "ingame" # Esclude chi sta giocando
+                                if p["status"] != "ingame" 
                             ]
                         for c in targets:
                             try: send_msg(c, msg_obj)
@@ -189,6 +187,57 @@ def client_handler(conn, addr):
                     
                     if res.get("status") == "ended":
                         log(f"[GameOver] Stanza {current_room.id[:8]}: {res.get('result')}")
+            
+            # --- GESTIONE ABBANDONO PARTITA ---
+            elif action == "leave_game":
+                room_id = msg.get("room_id")
+                # Verifichiamo che la stanza esista
+                if room_id in rooms:
+                    game_to_close = rooms[room_id]
+                    log(f"[Abbandono] {player_id} ha abbandonato la stanza {room_id[:8]}")
+                    
+                    # Logica: L'altro vince
+                    with game_to_close.lock:
+                        # Trova l'avversario
+                        winner_id = None
+                        opponent_conn = None
+                        
+                        for pid, symbol in game_to_close.players.items():
+                            if pid != player_id:
+                                winner_id = pid
+                                opponent_conn = game_to_close.connections.get(pid)
+                                break
+                        
+                        if opponent_conn:
+                            try:
+                                send_msg(opponent_conn, {
+                                    "type": "game_state",
+                                    "data": {
+                                        "board": game_to_close.board,
+                                        "turn": None,
+                                        "result": "disconnected",
+                                        "status": "ended"
+                                    }
+                                })
+                            except: pass
+                    
+                    # --- MODIFICA QUI ---
+                    # Aggiorna SOLO lo stato di chi ha abbandonato a "online".
+                    # Il vincitore resta "ingame" finché non preme "Torna alla Lobby".
+                    with players_lock:
+                        if player_id in players_data:
+                            players_data[player_id]["status"] = "online"
+                    # --------------------
+
+                    # Rimuovi stanza
+                    with rooms_lock:
+                        if room_id in rooms:
+                            del rooms[room_id]
+                    
+                    # Se era la stanza corrente per questo thread (il quitter), resettala
+                    current_room = None
+                    broadcast_player_list()
+
 
             # --- GESTIONE USCITA DALLA CODA ---
             elif action == "leave_queue":
@@ -306,7 +355,7 @@ def main(page: ft.Page):
             active_connections.clear()
             if count > 0: log(f"Chiuse forzatamente {count} connessioni attive.")
         btn_start.disabled = False; btn_stop.disabled = True; status_indicator.bgcolor = "red"; status_text.value = "SERVER FERMO"; status_text.color = "red"; page.update()
-        log("--- SERVER OFFLINE ---")
+        #log("--- SERVER OFFLINE ---")
     btn_start = ft.ElevatedButton("Avvia Server", icon="play_arrow", on_click=start_server_click, bgcolor="green", color="white")
     btn_stop = ft.ElevatedButton("Ferma Server", icon="stop", on_click=stop_server_click, bgcolor="red", color="white", disabled=True)
     page.add(
@@ -314,7 +363,7 @@ def main(page: ft.Page):
         ft.Container(content=ft.Row([btn_start, btn_stop], alignment=ft.MainAxisAlignment.CENTER, spacing=20), padding=10),
         ft.Text("Console Logs:", size=14, color="grey"),
         ft.Container(content=logs_view, expand=True, bgcolor="#121212", border=ft.border.all(1, "#333333"), border_radius=10, margin=ft.margin.only(top=10)),
-        ft.Text("v1.0 - Powered by Python & Flet", size=10, color="grey", text_align="center")
+        ft.Text("v1.0 by Giuseppe E. Giuffrida - Raffaele Romeo - Karol Scandurra", size=10, color="grey", text_align="center")
     )
 
 if __name__ == "__main__":
