@@ -51,7 +51,6 @@ class GameRoom:
             return self.players[player_id]
 
     def apply_move(self, player_id, pos):
-        # ... (Il resto del codice di apply_move e _check_winner rimane identico) ...
         with self.lock:
             if self.status != "running":
                 return {"ok": False, "reason": "Game not running"}
