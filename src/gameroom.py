@@ -27,27 +27,24 @@ class GameRoom:
             if len(self.players) >= 2:
                 raise GameRoomError("Room full")
             
-            # Aggiungiamo il secondo giocatore (ancora senza simbolo)
             self.players[player_id] = None
             self.connections[player_id] = conn
             
             # --- SORTEGGIO CASUALE ---
-            # Prendiamo gli ID dei due giocatori connessi
-            p_ids = list(self.players.keys()) # [Host, Joiner]
+            p_ids = list(self.players.keys()) 
             
-            # Mischiamo la lista a caso
+
             random.shuffle(p_ids) 
             
-            # Assegniamo i simboli in base all'ordine mischiato
-            self.players[p_ids[0]] = "X" # Il primo estratto sarà X (e inizierà)
-            self.players[p_ids[1]] = "O" # Il secondo sarà O
             
-            self.turn = "X" # Tocca sempre a X per primo
+            self.players[p_ids[0]] = "X" 
+            self.players[p_ids[1]] = "O" 
+            
+            self.turn = "X" 
             self.status = "running"
             
             print(f"[GameRoom] Sorteggio effettuato: X={p_ids[0]}, O={p_ids[1]}")
             
-            # Ritorniamo il simbolo assegnato a CHI STA ENTRANDO ORA
             return self.players[player_id]
 
     def apply_move(self, player_id, pos):
